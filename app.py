@@ -1,5 +1,8 @@
-from flask import Flask, request, jsonify, send_file
-import os, subprocess, tempfile
+from flask import Flask, request, jsonify
+import os
+import subprocess
+import tempfile
+import json
 
 app = Flask(__name__)
 
@@ -24,22 +27,34 @@ def download(owner):
         return jsonify({"error":"No URL provided"}), 400
 
     tmpdir = tempfile.mkdtemp()
-    out_template = tmpdir + "/%(title)s.%(ext)s"
-
-    if typ.lower() == "audio":
-        cmd = ["yt-dlp","-x","--audio-format","mp3","-o", out_template, url]
-    else:
-        cmd = ["yt-dlp","-f","bestvideo+bestaudio/best","-o", out_template, url]
+    out_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
 
     try:
-        subprocess.check_call(cmd)
-        files = [f for f in os.listdir(tmpdir) if not f.startswith(".")]
-        if not files:
-            return jsonify({"error":"Download failed"}), 500
-        filepath = tmpdir + "/" + files[0]
-        return send_file(filepath, as_attachment=True)
-    except subprocess.CalledProcessError as e:
-        return jsonify({"error":"Download error","detail":str(e)}), 500
+        # Use yt-dlp to get info JSON
+        info_cmd = ["yt-dlp", "--dump-json", url]
+        result = subprocess.run(info_cmd, capture_output=True, text=True)
+        info = json.loads(result.stdout)
+
+        # Get video title and thumbnail
+        title = info.get("title", "video")
+        thumbnail_url = info.get("thumbnail")
+
+        # Construct direct download URL
+        if typ.lower() == "audio":
+            # yt-dlp direct extraction format
+            download_cmd = f"https://www.youtube.com/watch?v={info.get('id')}"
+        else:
+            download_cmd = f"https://www.youtube.com/watch?v={info.get('id')}"
+
+        return jsonify({
+            "title": title,
+            "type": typ,
+            "download_url": download_cmd,
+            "thumbnail_url": thumbnail_url
+        })
+
+    except Exception as e:
+        return jsonify({"error":"Failed to fetch info", "detail": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
